@@ -308,13 +308,8 @@ def process(sheet_path: str, output_dir: str):
         cell = remove_background(sheet.crop(box))
         print(f"  [{state}]")
 
-        if state == "idle":
-            # SVG for eye tracking
-            svg_path = assets / "bunny-idle.svg"
-            make_idle_svg(cell, svg_path, vw, vh, PADDING)
-        else:
-            frames = make_frames(cell, state, PADDING)
-            build_apng(frames, assets / f"bunny-{state}.apng")
+        frames = make_frames(cell, state, PADDING)
+        build_apng(frames, assets / f"bunny-{state}.apng")
 
     # ── theme.json ──────────────────────────────
     eye_rx = 0.5   # will be tuned by detect_eyes centroid / vw
@@ -337,25 +332,10 @@ def process(sheet_path: str, output_dir: str):
             "baselineBottomRatio": 0.03,
         },
 
-        "eyeTracking": {
-            "enabled": True,
-            "states": ["idle"],
-            "eyeRatioX": eye_rx,
-            "eyeRatioY": eye_ry,
-            "maxOffset": int(vw * 0.025),
-            "bodyScale": 0.15,
-            "shadowStretch": 0.08,
-            "shadowShift": 0.15,
-            "ids": {
-                "eyes":   "eyes-js",
-                "body":   "body-js",
-                "shadow": "shadow-js",
-            },
-            "shadowOrigin": f"{vw//2}px {vh-4}px",
-        },
+        "eyeTracking": {"enabled": False},
 
         "states": {
-            "idle":         ["bunny-idle.svg"],
+            "idle":         ["bunny-idle.apng"],
             "thinking":     ["bunny-thinking.apng"],
             "working":      ["bunny-working.apng"],
             "error":        ["bunny-error.apng"],
