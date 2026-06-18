@@ -7,7 +7,7 @@ Usage:
     python3 process_sticker_sheet2.py <path-to-kitty2.png>
 """
 
-import sys, os, math, json, shutil, tempfile, base64, io
+import sys, os, math, json, shutil, tempfile
 from pathlib import Path
 from PIL import Image, ImageFilter, ImageDraw
 
@@ -113,46 +113,37 @@ def detect_eyes(cell: Image.Image):
 
 def make_idle_svg(cell: Image.Image, out_path: Path, vw: int, vh: int, padding: int):
     """
-    Creates an SVG for idle state with:
-    - body-js: full character image (slight body parallax)
-    - eyes-js: dark pupil circles positioned over detected eyes
-    - shadow-js: simple ellipse shadow at bottom
+    Creates an SVG for idle state with eye tracking.
+    Saves the character as a separate PNG (relative href — Electron can load it).
     """
     lx, ly, rx, ry, radius = detect_eyes(cell)
     print(f"    Eye detection: L=({lx},{ly}) R=({rx},{ry}) r={radius}")
 
-    # Embed PNG as base64
-    buf = io.BytesIO()
-    cell.save(buf, "PNG")
-    b64 = base64.b64encode(buf.getvalue()).decode()
-
     cw, ch = cell.size
-    img_y = padding // 2  # vertical offset within canvas
+    img_y = padding // 2
 
-    # The eye pupil color — match the dark part of the rabbit eye
-    # Rabbit has very dark navy pupils
+    # Save base image as separate PNG next to SVG
+    base_png_name = "bunny-idle-base.png"
+    base_png_path = out_path.parent / base_png_name
+    cell.save(str(base_png_path), "PNG")
+
     pupil_color = "#1a1c2e"
     pupil_r = max(int(radius * 0.55), 6)
-
-    # Adjust eye positions for canvas offset
     ely = ly + img_y
     ery = ry + img_y
 
     svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {vw} {vh}">
-  <!-- shadow -->
   <g id="shadow-js">
     <ellipse cx="{vw//2}" cy="{vh-4}" rx="{int(cw*0.28)}" ry="4"
              fill="#000000" opacity="0.18"/>
   </g>
 
-  <!-- body: full character image, moves slightly with cursor -->
   <g id="body-js">
-    <image href="data:image/png;base64,{b64}"
+    <image href="{base_png_name}"
            x="0" y="{img_y}" width="{cw}" height="{ch}"
            image-rendering="optimizeQuality"/>
   </g>
 
-  <!-- eyes: dark pupils that follow cursor -->
   <g id="eyes-js">
     <circle cx="{lx}" cy="{ely}" r="{pupil_r}" fill="{pupil_color}" opacity="0.85"/>
     <circle cx="{rx}" cy="{ery}" r="{pupil_r}" fill="{pupil_color}" opacity="0.85"/>
@@ -160,7 +151,7 @@ def make_idle_svg(cell: Image.Image, out_path: Path, vw: int, vh: int, padding: 
 </svg>"""
 
     out_path.write_text(svg, encoding="utf-8")
-    print(f"    → {out_path.name}  (SVG with eye tracking)")
+    print(f"    → {out_path.name}  (SVG with eye tracking, base: {base_png_name})")
 
 
 # ──────────────────────────────────────────────
