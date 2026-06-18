@@ -262,7 +262,7 @@ def process(sheet_path: str, output_dir: str):
             "contentBox": {"x": int(cw * 0.05), "y": PADDING // 2, "width": int(cw * 0.90), "height": ch},
             "centerX": cw // 2,
             "baselineY": canvas_h - 5,
-            "visibleHeightRatio": 0.38,
+            "visibleHeightRatio": 0.65,
             "baselineBottomRatio": 0.04,
         },
 
@@ -306,10 +306,10 @@ def process(sheet_path: str, output_dir: str):
         "miniMode": {"supported": False},
 
         "objectScale": {
-            "widthRatio": 1.0,
-            "heightRatio": 1.0,
-            "offsetX": 0.0,
-            "offsetY": 0.0,
+            "widthRatio": 2.2,
+            "heightRatio": 2.2,
+            "offsetX": -0.6,
+            "offsetY": -0.6,
         },
     }
 
