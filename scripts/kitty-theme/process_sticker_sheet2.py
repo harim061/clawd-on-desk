@@ -27,12 +27,38 @@ POSES = [
 # Background removal
 # ──────────────────────────────────────────────
 
-def remove_background(img: Image.Image, tol: int = 40) -> Image.Image:
+def detect_bg_color(img: Image.Image):
+    """
+    Find background color by sampling border pixels and picking the most
+    common hue cluster — ignores white/near-white (>200,200,200) so that
+    sticker eye-whites or star whites are never mistaken for background.
+    """
+    w, h = img.size
+    samples = []
+    step = 4
+    for x in range(0, w, step):
+        samples.append(img.getpixel((x, 0))[:3])
+        samples.append(img.getpixel((x, h-1))[:3])
+    for y in range(0, h, step):
+        samples.append(img.getpixel((0, y))[:3])
+        samples.append(img.getpixel((w-1, y))[:3])
+
+    # Exclude near-white and near-black pixels
+    candidates = [s for s in samples if not (s[0]>200 and s[1]>200 and s[2]>200)
+                                     and not (s[0]<30  and s[1]<30  and s[2]<30)]
+    if not candidates:
+        candidates = samples  # fallback
+
+    # Return average of candidates
+    n = len(candidates)
+    return tuple(int(sum(c[i] for c in candidates)/n) for i in range(3))
+
+
+def remove_background(img: Image.Image, tol: int = 38) -> Image.Image:
     img = img.convert("RGBA")
     pixels = img.load()
     w, h = img.size
-    corners = [(5,5),(w-5,5),(5,h-5),(w-5,h-5)]
-    bg = tuple(int(sum(img.getpixel(c)[i] for c in corners)/4) for i in range(3))
+    bg = detect_bg_color(img)
 
     def dist(c):
         return math.sqrt(sum((a-b)**2 for a,b in zip(c[:3], bg)))
@@ -40,6 +66,9 @@ def remove_background(img: Image.Image, tol: int = 40) -> Image.Image:
     for y in range(h):
         for x in range(w):
             px = pixels[x,y]
+            # Never erase near-white pixels (eyes, star text, highlights)
+            if px[0] > 200 and px[1] > 200 and px[2] > 200:
+                continue
             d = dist(px)
             if d < tol:
                 pixels[x,y] = (px[0],px[1],px[2],0)
