@@ -99,6 +99,34 @@ def _png_idat_data(img: Image.Image) -> bytes:
     return zlib.compress(bytes(raw))
 
 
+def build_gif(frames_with_delays, out_path: Path):
+    """Save animated GIF with transparency using Pillow."""
+    W, H = frames_with_delays[0][0].size
+    pil_frames = []
+    durations = []
+    for frame_img, delay_ms in frames_with_delays:
+        rgba = frame_img.convert("RGBA").resize((W, H), Image.LANCZOS)
+        # Convert to palette with transparency
+        p = Image.new("P", rgba.size)
+        p.paste(rgba.convert("RGB"))
+        rgba_data = rgba.load()
+        # Use GIF transparency: convert RGBA → P with transparent index
+        gif_frame = rgba.convert("RGB").quantize(colors=255, method=Image.Quantize.MEDIANCUT)
+        pil_frames.append(gif_frame)
+        durations.append(delay_ms)
+
+    pil_frames[0].save(
+        str(out_path),
+        format="GIF",
+        save_all=True,
+        append_images=pil_frames[1:],
+        loop=0,
+        duration=durations,
+        optimize=False,
+    )
+    print(f"  → {out_path.name}  ({len(frames_with_delays)} frames, {W}×{H})")
+
+
 def build_apng(frames_with_delays, out_path: Path):
     """
     frames_with_delays: list of (PIL.Image RGBA, delay_ms int)
@@ -165,8 +193,8 @@ def process(sheet_path: str, output_dir: str):
             canvas.paste(cell_clean, (0, paste_y + dy))
             frames.append((canvas, delay_ms))
 
-        apng_path = assets_dir / f"kitty-{state}.apng"
-        build_apng(frames, apng_path)
+        gif_path = assets_dir / f"kitty-{state}.gif"
+        build_gif(frames, gif_path)
 
     # ── theme.json ──────────────────────────────
     theme = {
@@ -189,21 +217,21 @@ def process(sheet_path: str, output_dir: str):
         "eyeTracking": {"enabled": False},
 
         "states": {
-            "idle":         [f"kitty-idle.apng"],
-            "thinking":     [f"kitty-thinking.apng"],
-            "working":      [f"kitty-working.apng"],
-            "error":        [f"kitty-error.apng"],
-            "attention":    [f"kitty-attention.apng"],
-            "notification": [f"kitty-notification.apng"],
-            "sleeping":     [f"kitty-sleeping.apng"],
-            "waking":       [f"kitty-waking.apng"],
+            "idle":         [f"kitty-idle.gif"],
+            "thinking":     [f"kitty-thinking.gif"],
+            "working":      [f"kitty-working.gif"],
+            "error":        [f"kitty-error.gif"],
+            "attention":    [f"kitty-attention.gif"],
+            "notification": [f"kitty-notification.gif"],
+            "sleeping":     [f"kitty-sleeping.gif"],
+            "waking":       [f"kitty-waking.gif"],
         },
 
         "sleepSequence": {"mode": "direct"},
 
         "workingTiers": [
-            {"minSessions": 2, "file": "kitty-working.apng"},
-            {"minSessions": 1, "file": "kitty-working.apng"},
+            {"minSessions": 2, "file": "kitty-working.gif"},
+            {"minSessions": 1, "file": "kitty-working.gif"},
         ],
 
         "timings": {
@@ -215,12 +243,12 @@ def process(sheet_path: str, output_dir: str):
             "default":  {"x": int(cw * 0.1), "y": int(ch * 0.3), "w": int(cw * 0.8), "h": int(ch * 0.65)},
             "sleeping": {"x": int(cw * 0.05), "y": int(ch * 0.5), "w": int(cw * 0.9), "h": int(ch * 0.45)},
         },
-        "sleepingHitboxFiles": ["kitty-sleeping.apng"],
+        "sleepingHitboxFiles": ["kitty-sleeping.gif"],
 
         "reactions": {
-            "clickLeft":  {"file": "kitty-attention.apng", "duration": 2000},
-            "clickRight": {"file": "kitty-waking.apng",    "duration": 2000},
-            "double":     {"files": ["kitty-attention.apng"], "duration": 3000},
+            "clickLeft":  {"file": "kitty-attention.gif", "duration": 2000},
+            "clickRight": {"file": "kitty-waking.gif",    "duration": 2000},
+            "double":     {"files": ["kitty-attention.gif"], "duration": 3000},
         },
 
         "miniMode": {"supported": False},
