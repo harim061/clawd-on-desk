@@ -54,27 +54,61 @@ def detect_bg_color(img: Image.Image):
     return tuple(int(sum(c[i] for c in candidates)/n) for i in range(3))
 
 
-def remove_background(img: Image.Image, tol: int = 38) -> Image.Image:
+def remove_background(img: Image.Image, tol: int = 32) -> Image.Image:
+    """
+    Flood-fill background removal starting from all edges.
+    Only pixels reachable from the border AND close to bg color are erased.
+    Interior pixels that happen to match bg color are left untouched.
+    Adds soft feathering at the sticker edge.
+    """
     img = img.convert("RGBA")
-    pixels = img.load()
     w, h = img.size
+    pixels = img.load()
     bg = detect_bg_color(img)
 
-    def dist(c):
-        return math.sqrt(sum((a-b)**2 for a,b in zip(c[:3], bg)))
+    def color_dist(c):
+        return math.sqrt(sum((a - b) ** 2 for a, b in zip(c[:3], bg)))
 
+    # BFS flood fill from all border pixels
+    visited = [[False] * h for _ in range(w)]
+    queue = []
+    for x in range(w):
+        for y in [0, h - 1]:
+            if not visited[x][y] and color_dist(pixels[x, y]) < tol * 2:
+                queue.append((x, y))
+                visited[x][y] = True
     for y in range(h):
-        for x in range(w):
-            px = pixels[x,y]
-            # Never erase near-white pixels (eyes, star text, highlights)
-            if px[0] > 200 and px[1] > 200 and px[2] > 200:
-                continue
-            d = dist(px)
-            if d < tol:
-                pixels[x,y] = (px[0],px[1],px[2],0)
-            elif d < tol*1.8:
-                alpha = int(255*(d-tol)/(tol*0.8))
-                pixels[x,y] = (px[0],px[1],px[2],min(alpha,px[3]))
+        for x in [0, w - 1]:
+            if not visited[x][y] and color_dist(pixels[x, y]) < tol * 2:
+                queue.append((x, y))
+                visited[x][y] = True
+
+    # BFS
+    head = 0
+    while head < len(queue):
+        cx, cy = queue[head]; head += 1
+        px = pixels[cx, cy]
+        d = color_dist(px)
+
+        # Never erase white (eyes, star text)
+        if px[0] > 210 and px[1] > 210 and px[2] > 210:
+            continue
+
+        if d < tol:
+            pixels[cx, cy] = (px[0], px[1], px[2], 0)
+        elif d < tol * 1.6:
+            # Soft feather edge
+            alpha = int(255 * (d - tol) / (tol * 0.6))
+            pixels[cx, cy] = (px[0], px[1], px[2], min(alpha, px[3]))
+        else:
+            continue  # hit character edge — stop spreading
+
+        for dx, dy in [(-1,0),(1,0),(0,-1),(0,1),(-1,-1),(1,-1),(-1,1),(1,1)]:
+            nx, ny = cx + dx, cy + dy
+            if 0 <= nx < w and 0 <= ny < h and not visited[nx][ny]:
+                visited[nx][ny] = True
+                queue.append((nx, ny))
+
     return img
 
 
