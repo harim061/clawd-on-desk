@@ -334,7 +334,7 @@ def process(sheet_path: str, output_dir: str):
         "name": "Bunny",
         "author": "harim.noh@outta.ai",
         "version": "1.0.0",
-        "description": "Dark navy bunny with WB star — eye tracking idle",
+        "description": "Dark navy bunny with WB star - eye tracking idle",
 
         "viewBox": {"x": 0, "y": 0, "width": vw, "height": vh},
 
@@ -408,7 +408,7 @@ def process(sheet_path: str, output_dir: str):
         },
     }
 
-    (out / "theme.json").write_text(json.dumps(theme, indent=2, ensure_ascii=False))
+    (out / "theme.json").write_text(json.dumps(theme, indent=2, ensure_ascii=True), encoding="utf-8")
     print(f"\ntheme.json written → {out/'theme.json'}")
     return out
 
