@@ -20,6 +20,7 @@ import json
 import shutil
 from pathlib import Path
 from PIL import Image, ImageFilter
+import tempfile
 import struct
 import zlib
 
@@ -101,60 +102,36 @@ def _png_idat_data(img: Image.Image) -> bytes:
 def build_apng(frames_with_delays, out_path: Path):
     """
     frames_with_delays: list of (PIL.Image RGBA, delay_ms int)
-    Writes a valid APNG file to out_path.
+    Writes a valid APNG using the apng library.
     """
-    if not frames_with_delays:
-        raise ValueError("No frames")
+    from apng import APNG, PNG
+    import tempfile, os
 
-    num_frames = len(frames_with_delays)
-    first = frames_with_delays[0][0]
-    W, H = first.size
-
-    seq = [0]  # sequence number counter
-
-    def next_seq():
-        v = seq[0]
-        seq[0] += 1
-        return v
-
-    chunks = bytearray(b"\x89PNG\r\n\x1a\n")  # PNG signature
-
-    # IHDR
-    ihdr_data = struct.pack(">IIBBBBB", W, H, 8, 6, 0, 0, 0)
-    chunks += _make_png_chunk(b"IHDR", ihdr_data)
-
-    # acTL  (animation control)
-    actl_data = struct.pack(">II", num_frames, 0)
-    chunks += _make_png_chunk(b"acTL", actl_data)
+    tmp_dir = Path(tempfile.mkdtemp())
+    png_paths = []
+    delays = []
+    W, H = frames_with_delays[0][0].size
 
     for i, (frame_img, delay_ms) in enumerate(frames_with_delays):
         frame_rgba = frame_img.convert("RGBA").resize((W, H), Image.LANCZOS)
-        idat_bytes = _png_idat_data(frame_rgba)
+        p = tmp_dir / f"frame_{i:03d}.png"
+        frame_rgba.save(str(p), "PNG")
+        png_paths.append(str(p))
+        delays.append(delay_ms)
 
-        delay_num = delay_ms
-        delay_den = 1000
+    anim = APNG()
+    for path, delay_ms in zip(png_paths, delays):
+        png = PNG.from_bytes(open(path, "rb").read())
+        anim.append(png, delay=delay_ms, delay_den=1000)
 
-        # fcTL
-        fctl_data = struct.pack(
-            ">IIIIIHHBB",
-            next_seq(), W, H, 0, 0,
-            delay_num, delay_den, 0, 0
-        )
-        chunks += _make_png_chunk(b"fcTL", fctl_data)
+    anim.save(str(out_path))
 
-        if i == 0:
-            # First frame: use IDAT
-            chunks += _make_png_chunk(b"IDAT", idat_bytes)
-        else:
-            # Subsequent frames: use fdAT
-            fdat_data = struct.pack(">I", next_seq()) + idat_bytes
-            chunks += _make_png_chunk(b"fdAT", fdat_data)
+    # cleanup temp frames
+    for p in png_paths:
+        os.remove(p)
+    tmp_dir.rmdir()
 
-    # IEND
-    chunks += _make_png_chunk(b"IEND", b"")
-
-    out_path.write_bytes(bytes(chunks))
-    print(f"  → {out_path.name}  ({num_frames} frames, {W}×{H})")
+    print(f"  → {out_path.name}  ({len(frames_with_delays)} frames, {W}×{H})")
 
 
 # ──────────────────────────────────────────────
