@@ -110,3 +110,5 @@ scripts/*
 
 # Cursor local config (MCP, rules from omc setup)
 .cursor/
+!scripts/kitty-theme/
+!scripts/kitty-theme/**
