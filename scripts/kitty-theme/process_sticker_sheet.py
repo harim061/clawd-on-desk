@@ -4,13 +4,6 @@ Process the 8-pose Clawd kitty sticker sheet into a custom theme.
 
 Usage:
     python3 process_sticker_sheet.py <path-to-image>
-
-Steps:
-    1. Split 4x2 grid into 8 individual poses
-    2. Remove purple background → transparent PNG
-    3. Create APNG animations (gentle float/bounce per state)
-    4. Generate theme.json
-    5. Install to ~/.config/clawd-on-desk/themes/kitty/
 """
 
 import sys
@@ -18,17 +11,14 @@ import os
 import math
 import json
 import shutil
+import tempfile
 from pathlib import Path
 from PIL import Image, ImageFilter
-import tempfile
-import struct
-import zlib
 
 # ──────────────────────────────────────────────
 # Pose definitions (4 cols × 2 rows)
 # ──────────────────────────────────────────────
 POSES = [
-    # (col, row, state_name,       description)
     (0, 0, "idle",          "neutral sitting"),
     (1, 0, "thinking",      "question mark look-away"),
     (2, 0, "working",       "typing on laptop"),
@@ -39,31 +29,154 @@ POSES = [
     (3, 1, "waking",        "happy wink"),
 ]
 
-# Animation frames: (dy_px, scale, duration_ms) per frame
-ANIMATIONS = {
-    "idle":         [(0, 1.00, 600), (-3, 1.00, 600)],          # gentle float
-    "thinking":     [(0, 1.00, 500), (-2, 1.00, 800), (0, 1.00, 500)],
-    "working":      [(0, 1.00, 200), (-2, 1.00, 200), (0, 1.00, 200), (-1, 1.00, 200)],  # typing
-    "error":        [(0, 1.00, 300), (2, 1.00, 150), (-2, 1.00, 150), (0, 1.00, 600)],  # shake
-    "attention":    [(0, 1.00, 400), (-5, 1.00, 300), (0, 1.00, 400)],  # bounce
-    "notification": [(0, 1.00, 300), (-3, 1.00, 200), (0, 1.00, 300)],
-    "sleeping":     [(0, 1.00, 1000), (-1, 1.00, 1000)],         # slow breathe
-    "waking":       [(0, 1.00, 200), (-3, 1.00, 300), (0, 1.00, 300)],
-}
+
+def ease_in_out(t):
+    return t * t * (3 - 2 * t)
+
+
+def make_frames(cell: Image.Image, state: str):
+    """
+    Generate (PIL.Image, delay_ms) frame list for each state.
+    Uses smooth sine/easing interpolation for natural motion.
+    """
+    cw, ch = cell.size
+    PADDING = 40  # extra canvas space for movement
+
+    def canvas(dy_frac, dx_frac=0.0, scale=1.0):
+        """Paste cell onto a larger canvas with given offsets."""
+        max_dy = int(ch * 0.07)   # 7% of height
+        max_dx = int(cw * 0.04)
+        dy = int(dy_frac * max_dy)
+        dx = int(dx_frac * max_dx)
+        W, H = cw, ch + PADDING
+        img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        if scale != 1.0:
+            sw = int(cw * scale)
+            sh = int(ch * scale)
+            scaled = cell.resize((sw, sh), Image.LANCZOS)
+            ox = (cw - sw) // 2
+            oy = (ch - sh) // 2
+            img.paste(scaled, (ox + dx, PADDING // 2 + oy + dy), scaled)
+        else:
+            img.paste(cell, (dx, PADDING // 2 + dy), cell)
+        return img
+
+    # Build per-state keyframe sequences
+    # Each entry: (dy_fraction, dx_fraction, scale, delay_ms)
+    # dy: -1=up, +1=down | smooth float uses sine curve
+    N = 8  # frames per cycle for smooth animation
+
+    if state == "idle":
+        # Gentle float up and down (sine wave)
+        frames = []
+        for i in range(N):
+            t = i / N
+            dy = -ease_in_out(math.sin(t * math.pi))  # 0 → up → 0
+            frames.append((canvas(dy), 80))
+        for i in range(N):
+            t = i / N
+            dy = ease_in_out(math.sin(t * math.pi)) * 0.3  # 0 → slight down → 0
+            frames.append((canvas(dy), 80))
+        return frames
+
+    elif state == "thinking":
+        # Slow sway left-right
+        frames = []
+        for i in range(N * 2):
+            t = i / (N * 2)
+            dx = math.sin(t * 2 * math.pi) * 0.6
+            dy = -abs(math.sin(t * 2 * math.pi)) * 0.3
+            frames.append((canvas(dy, dx), 100))
+        return frames
+
+    elif state == "working":
+        # Quick typing bounce (fast up-down)
+        seq = [
+            (canvas(-0.5, 0),  80),
+            (canvas(0.0,  0),  60),
+            (canvas(-0.8, 0),  80),
+            (canvas(0.0,  0),  60),
+            (canvas(-0.3, 0),  80),
+            (canvas(0.0,  0), 120),
+        ]
+        return seq
+
+    elif state == "error":
+        # Shake left-right
+        seq = [
+            (canvas(0,  0.0),  60),
+            (canvas(0,  1.0),  60),
+            (canvas(0, -1.0),  60),
+            (canvas(0,  1.0),  60),
+            (canvas(0, -1.0),  60),
+            (canvas(0,  0.5),  60),
+            (canvas(0, -0.5),  60),
+            (canvas(0,  0.0), 300),
+        ]
+        return seq
+
+    elif state == "attention":
+        # Big happy bounce
+        seq = []
+        for i in range(6):
+            t = i / 5
+            dy = -ease_in_out(math.sin(t * math.pi))
+            scale = 1.0 + 0.05 * math.sin(t * math.pi)
+            seq.append((canvas(dy, scale=scale), 70))
+        seq.append((canvas(0.1), 80))
+        seq.append((canvas(0.0), 150))
+        return seq
+
+    elif state == "notification":
+        # Pop up then settle
+        seq = [
+            (canvas(-1.0), 80),
+            (canvas(-0.5), 60),
+            (canvas(0.0),  80),
+            (canvas(-0.3), 60),
+            (canvas(0.0), 200),
+        ]
+        return seq
+
+    elif state == "sleeping":
+        # Very slow breathe
+        frames = []
+        for i in range(N * 2):
+            t = i / (N * 2)
+            dy = math.sin(t * 2 * math.pi) * 0.2
+            frames.append((canvas(dy), 150))
+        return frames
+
+    elif state == "waking":
+        # Quick bounce + settle
+        seq = [
+            (canvas(-1.0), 70),
+            (canvas(-0.5), 60),
+            (canvas(0.0),  70),
+            (canvas(-0.4), 60),
+            (canvas(0.0), 100),
+        ]
+        return seq
+
+    else:
+        return [(canvas(0), 500)]
 
 
 # ──────────────────────────────────────────────
 # Background removal
 # ──────────────────────────────────────────────
 
-def remove_background(img: Image.Image, tol: int = 35) -> Image.Image:
-    """Remove the solid purple/lavender background, keeping sticker + shadow."""
+def remove_background(img: Image.Image, tol: int = 40) -> Image.Image:
+    """Remove solid purple/lavender background → transparent."""
     img = img.convert("RGBA")
     pixels = img.load()
     w, h = img.size
 
-    # Sample background colour from a corner
-    bg = img.getpixel((5, 5))[:3]
+    # Sample from multiple corners for robustness
+    corners = [(5, 5), (w - 5, 5), (5, h - 5), (w - 5, h - 5)]
+    bg_samples = [img.getpixel(c)[:3] for c in corners]
+    # Pick most common-ish (just average them)
+    bg = tuple(int(sum(c[i] for c in bg_samples) / len(bg_samples)) for i in range(3))
 
     def dist(c):
         return math.sqrt(sum((a - b) ** 2 for a, b in zip(c[:3], bg)))
@@ -71,94 +184,39 @@ def remove_background(img: Image.Image, tol: int = 35) -> Image.Image:
     for y in range(h):
         for x in range(w):
             px = pixels[x, y]
-            if dist(px) < tol:
+            d = dist(px)
+            if d < tol:
                 pixels[x, y] = (px[0], px[1], px[2], 0)
+            elif d < tol * 1.5:
+                # soft edge fade
+                alpha = int(255 * (d - tol) / (tol * 0.5))
+                pixels[x, y] = (px[0], px[1], px[2], min(alpha, px[3]))
 
-    # Light alpha-smoothing on edges
-    img = img.filter(ImageFilter.SMOOTH_MORE)
     return img
 
 
 # ──────────────────────────────────────────────
-# APNG builder (pure-Python, no extra deps)
+# APNG builder using apng library
 # ──────────────────────────────────────────────
 
-def _make_png_chunk(chunk_type: bytes, data: bytes) -> bytes:
-    c = struct.pack(">I", len(data)) + chunk_type + data
-    return c + struct.pack(">I", zlib.crc32(chunk_type + data) & 0xFFFFFFFF)
-
-
-def _png_idat_data(img: Image.Image) -> bytes:
-    """Return raw deflated scanlines for a single frame."""
-    raw = bytearray()
-    for y in range(img.height):
-        raw.append(0)  # filter type = None
-        for x in range(img.width):
-            r, g, b, a = img.getpixel((x, y))
-            raw.extend([r, g, b, a])
-    return zlib.compress(bytes(raw))
-
-
-def build_gif(frames_with_delays, out_path: Path):
-    """Save animated GIF with transparency using Pillow."""
-    W, H = frames_with_delays[0][0].size
-    pil_frames = []
-    durations = []
-    for frame_img, delay_ms in frames_with_delays:
-        rgba = frame_img.convert("RGBA").resize((W, H), Image.LANCZOS)
-        # Convert to palette with transparency
-        p = Image.new("P", rgba.size)
-        p.paste(rgba.convert("RGB"))
-        rgba_data = rgba.load()
-        # Use GIF transparency: convert RGBA → P with transparent index
-        gif_frame = rgba.convert("RGB").quantize(colors=255, method=Image.Quantize.MEDIANCUT)
-        pil_frames.append(gif_frame)
-        durations.append(delay_ms)
-
-    pil_frames[0].save(
-        str(out_path),
-        format="GIF",
-        save_all=True,
-        append_images=pil_frames[1:],
-        loop=0,
-        duration=durations,
-        optimize=False,
-    )
-    print(f"  → {out_path.name}  ({len(frames_with_delays)} frames, {W}×{H})")
-
-
 def build_apng(frames_with_delays, out_path: Path):
-    """
-    frames_with_delays: list of (PIL.Image RGBA, delay_ms int)
-    Writes a valid APNG using the apng library.
-    """
     from apng import APNG, PNG
-    import tempfile, os
 
     tmp_dir = Path(tempfile.mkdtemp())
-    png_paths = []
-    delays = []
+    try:
+        anim = APNG()
+        for i, (frame_img, delay_ms) in enumerate(frames_with_delays):
+            p = tmp_dir / f"f{i:03d}.png"
+            frame_img.convert("RGBA").save(str(p), "PNG")
+            png = PNG.from_bytes(p.read_bytes())
+            anim.append(png, delay=delay_ms, delay_den=1000)
+        anim.save(str(out_path))
+    finally:
+        for f in tmp_dir.glob("*.png"):
+            f.unlink()
+        tmp_dir.rmdir()
+
     W, H = frames_with_delays[0][0].size
-
-    for i, (frame_img, delay_ms) in enumerate(frames_with_delays):
-        frame_rgba = frame_img.convert("RGBA").resize((W, H), Image.LANCZOS)
-        p = tmp_dir / f"frame_{i:03d}.png"
-        frame_rgba.save(str(p), "PNG")
-        png_paths.append(str(p))
-        delays.append(delay_ms)
-
-    anim = APNG()
-    for path, delay_ms in zip(png_paths, delays):
-        png = PNG.from_bytes(open(path, "rb").read())
-        anim.append(png, delay=delay_ms, delay_den=1000)
-
-    anim.save(str(out_path))
-
-    # cleanup temp frames
-    for p in png_paths:
-        os.remove(p)
-    tmp_dir.rmdir()
-
     print(f"  → {out_path.name}  ({len(frames_with_delays)} frames, {W}×{H})")
 
 
@@ -178,23 +236,17 @@ def process(sheet_path: str, output_dir: str):
 
     print(f"Sheet: {W}×{H}px  →  cell: {cw}×{ch}px")
 
+    PADDING = 40
+    canvas_h = ch + PADDING
+
     for col, row, state, desc in POSES:
         box = (col * cw, row * ch, (col + 1) * cw, (row + 1) * ch)
         cell = sheet.crop(box)
         cell_clean = remove_background(cell)
 
-        # Build animated frames with vertical offset
-        anim_def = ANIMATIONS.get(state, [(0, 1.0, 600)])
-        canvas_h = ch + 10  # extra padding for bounce headroom
-        frames = []
-        for dy, _scale, delay_ms in anim_def:
-            canvas = Image.new("RGBA", (cw, canvas_h), (0, 0, 0, 0))
-            paste_y = max(0, abs(dy))
-            canvas.paste(cell_clean, (0, paste_y + dy))
-            frames.append((canvas, delay_ms))
-
-        gif_path = assets_dir / f"kitty-{state}.gif"
-        build_gif(frames, gif_path)
+        frames = make_frames(cell_clean, state)
+        apng_path = assets_dir / f"kitty-{state}.apng"
+        build_apng(frames, apng_path)
 
     # ── theme.json ──────────────────────────────
     theme = {
@@ -204,51 +256,51 @@ def process(sheet_path: str, output_dir: str):
         "version": "1.0.0",
         "description": "Cute white kitty sticker mascot",
 
-        "viewBox": {"x": 0, "y": 0, "width": cw, "height": ch + 10},
+        "viewBox": {"x": 0, "y": 0, "width": cw, "height": canvas_h},
 
         "layout": {
-            "contentBox": {"x": int(cw * 0.05), "y": 5, "width": int(cw * 0.90), "height": ch},
+            "contentBox": {"x": int(cw * 0.05), "y": PADDING // 2, "width": int(cw * 0.90), "height": ch},
             "centerX": cw // 2,
-            "baselineY": ch + 5,
+            "baselineY": canvas_h - 5,
             "visibleHeightRatio": 0.38,
-            "baselineBottomRatio": 0.04
+            "baselineBottomRatio": 0.04,
         },
 
         "eyeTracking": {"enabled": False},
 
         "states": {
-            "idle":         [f"kitty-idle.gif"],
-            "thinking":     [f"kitty-thinking.gif"],
-            "working":      [f"kitty-working.gif"],
-            "error":        [f"kitty-error.gif"],
-            "attention":    [f"kitty-attention.gif"],
-            "notification": [f"kitty-notification.gif"],
-            "sleeping":     [f"kitty-sleeping.gif"],
-            "waking":       [f"kitty-waking.gif"],
+            "idle":         ["kitty-idle.apng"],
+            "thinking":     ["kitty-thinking.apng"],
+            "working":      ["kitty-working.apng"],
+            "error":        ["kitty-error.apng"],
+            "attention":    ["kitty-attention.apng"],
+            "notification": ["kitty-notification.apng"],
+            "sleeping":     ["kitty-sleeping.apng"],
+            "waking":       ["kitty-waking.apng"],
         },
 
         "sleepSequence": {"mode": "direct"},
 
         "workingTiers": [
-            {"minSessions": 2, "file": "kitty-working.gif"},
-            {"minSessions": 1, "file": "kitty-working.gif"},
+            {"minSessions": 2, "file": "kitty-working.apng"},
+            {"minSessions": 1, "file": "kitty-working.apng"},
         ],
 
         "timings": {
             "mouseIdleTimeout": 25000,
-            "mouseSleepTimeout": 90000
+            "mouseSleepTimeout": 90000,
         },
 
         "hitBoxes": {
-            "default":  {"x": int(cw * 0.1), "y": int(ch * 0.3), "w": int(cw * 0.8), "h": int(ch * 0.65)},
-            "sleeping": {"x": int(cw * 0.05), "y": int(ch * 0.5), "w": int(cw * 0.9), "h": int(ch * 0.45)},
+            "default":  {"x": int(cw * 0.1), "y": PADDING // 2 + int(ch * 0.2), "w": int(cw * 0.8), "h": int(ch * 0.75)},
+            "sleeping": {"x": int(cw * 0.05), "y": PADDING // 2 + int(ch * 0.4), "w": int(cw * 0.9), "h": int(ch * 0.55)},
         },
-        "sleepingHitboxFiles": ["kitty-sleeping.gif"],
+        "sleepingHitboxFiles": ["kitty-sleeping.apng"],
 
         "reactions": {
-            "clickLeft":  {"file": "kitty-attention.gif", "duration": 2000},
-            "clickRight": {"file": "kitty-waking.gif",    "duration": 2000},
-            "double":     {"files": ["kitty-attention.gif"], "duration": 3000},
+            "clickLeft":  {"file": "kitty-attention.apng", "duration": 2000},
+            "clickRight": {"file": "kitty-waking.apng",    "duration": 2000},
+            "double":     {"files": ["kitty-attention.apng"], "duration": 3000},
         },
 
         "miniMode": {"supported": False},
@@ -258,18 +310,16 @@ def process(sheet_path: str, output_dir: str):
             "heightRatio": 1.0,
             "offsetX": 0.0,
             "offsetY": 0.0,
-        }
+        },
     }
 
     theme_json_path = out / "theme.json"
     theme_json_path.write_text(json.dumps(theme, indent=2, ensure_ascii=False))
     print(f"\ntheme.json written → {theme_json_path}")
-
     return out
 
 
 def get_theme_install_dir() -> Path:
-    """Return platform-appropriate user theme directory."""
     import platform
     system = platform.system()
     if system == "Windows":
@@ -296,7 +346,6 @@ if __name__ == "__main__":
         print("Usage: python3 process_sticker_sheet.py <sticker-sheet.png>")
         sys.exit(1)
 
-    import tempfile
     sheet_path = sys.argv[1]
     output_dir = sys.argv[2] if len(sys.argv) > 2 else str(Path(tempfile.gettempdir()) / "clawd-kitty-theme")
 
