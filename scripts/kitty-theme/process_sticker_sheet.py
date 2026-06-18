@@ -263,9 +263,22 @@ def process(sheet_path: str, output_dir: str):
     return out
 
 
+def get_theme_install_dir() -> Path:
+    """Return platform-appropriate user theme directory."""
+    import platform
+    system = platform.system()
+    if system == "Windows":
+        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+        return base / "clawd-on-desk" / "themes" / "kitty"
+    elif system == "Darwin":
+        return Path.home() / "Library" / "Application Support" / "clawd-on-desk" / "themes" / "kitty"
+    else:
+        return Path.home() / ".config" / "clawd-on-desk" / "themes" / "kitty"
+
+
 def install_theme(theme_dir: Path):
-    """Copy theme to ~/.config/clawd-on-desk/themes/kitty/"""
-    dest = Path.home() / ".config" / "clawd-on-desk" / "themes" / "kitty"
+    dest = get_theme_install_dir()
+    dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
         shutil.rmtree(dest)
     shutil.copytree(theme_dir, dest)
@@ -275,11 +288,12 @@ def install_theme(theme_dir: Path):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python3 process_sticker_sheet.py <sticker-sheet.png> [output-dir]")
+        print("Usage: python3 process_sticker_sheet.py <sticker-sheet.png>")
         sys.exit(1)
 
+    import tempfile
     sheet_path = sys.argv[1]
-    output_dir = sys.argv[2] if len(sys.argv) > 2 else "/tmp/clawd-kitty-theme"
+    output_dir = sys.argv[2] if len(sys.argv) > 2 else str(Path(tempfile.gettempdir()) / "clawd-kitty-theme")
 
     print(f"Processing: {sheet_path}")
     theme_dir = process(sheet_path, output_dir)
